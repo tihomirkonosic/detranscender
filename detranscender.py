@@ -6,17 +6,19 @@ import dgl.data.utils as dgl_utils
 import torch
 
 
-def export_graph_to_csv(g, path):
-    with open(path, "w") as f:
-        for e in zip(*g.edges()):
-            f.write(f"{e[0].item()},{e[1].item()}\n")
-
-
 def is_comparable(g, edge_a, edge_b, edge_c):
-    eps = 0.2
+    eps = 0.12
     overlap_lengths = g.edata["overlap_length"]
-    a = overlap_lengths[edge_a].item() + overlap_lengths[edge_b].item()
-    b = overlap_lengths[edge_c].item()
+    read_lengths = g.ndata["read_length"]
+
+    node_a = g.edges()[0][edge_a]
+    node_b = g.edges()[0][edge_b]
+    length_a = read_lengths[node_a].item() - overlap_lengths[edge_a].item()
+    length_b = read_lengths[node_b].item() - overlap_lengths[edge_b].item()
+    length_c = read_lengths[node_a].item() - overlap_lengths[edge_c].item()
+    a = length_a + length_b
+    b = length_c
+
     return (b * (1 - eps) <= a <= b * (1 + eps)) or (a * (1 - eps) <= b <= a * (1 + eps))
 
 
@@ -50,6 +52,26 @@ def load_graph(path):
     return glist[0]
 
 
+def export_to_csv(g, path):
+    with open(path, "w") as f:
+        for e in zip(*g.edges()):
+            f.write(f"{e[0].item()},{e[1].item()}\n")
+
+
+def export_to_gfa(g, path, one_strand=True):
+    with open(path, "w") as f:
+        for n in g.nodes():
+            if one_strand and g.ndata['read_strand'][n.item()].item() != -1:
+                continue
+            f.write(f"S\tN_{n.item()}\t*\tLN:i:{g.ndata['read_length'][n.item()].item()}\n")
+
+        edges = g.edges(form="all")
+        for ei in range(edges[0].shape[0]):
+            if one_strand and g.ndata['read_strand'][edges[0][ei].item()].item() != -1:
+                continue
+            f.write(f"L\tN_{edges[0][ei].item()}\t+\tN_{edges[1][ei].item()}\t+\t{g.edata['overlap_length'][ei].item()}M\n")
+
+
 def generate_test_graph():
     g = dgl.graph((torch.tensor([0, 0, 0, 0, 1, 2, 3]), torch.tensor([1, 2, 3, 4, 2, 3, 4])))
     g.edata["overlap_length"] = torch.tensor([100, 200, 700, 800, 100, 100, 100])
@@ -58,13 +80,13 @@ def generate_test_graph():
 
 if __name__ == "__main__":
 
-    input_path = "test/chr19_hifi30x.dgl"
+    input_path = "test/chr19.dgl"
 
     out_folder = "out"
-    output_path = "out/chr19_hifi30x_optimised.dgl"
+    output_dgl_file = "chr19_hifi30x_optimised.dgl"
 
-    before_csv_path = "out/before.csv"
-    after_csv_path = "out/after.csv"
+    before_gfa_file = "before.gfa"
+    after_gfa_file = "after.gfa"
 
     print("Start:")
 
@@ -75,7 +97,8 @@ if __name__ == "__main__":
     graph = load_graph(input_path)
     # graph = generate_test_graph()
 
-    export_graph_to_csv(graph, before_csv_path)
+    # export_to_csv(graph, os.path.join(out_folder, before_csv_file))
+    export_to_gfa(graph, os.path.join(out_folder, before_gfa_file), one_strand=False)
 
     print("Graph loaded")
 
@@ -83,7 +106,10 @@ if __name__ == "__main__":
     remove_transitive_edges(graph)
     end_time = time.time()
 
-    dgl_utils.save_graphs(output_path, [graph])
-    export_graph_to_csv(graph, after_csv_path)
+    print(f"Removed transitive edges in {end_time - start_time} seconds")
 
-    print(f"Finished: time={end_time-start_time} seconds")
+    dgl_utils.save_graphs(os.path.join(out_folder, output_dgl_file), [graph])
+    # export_to_csv(graph, os.path.join(out_folder, after_csv_file))
+    export_to_gfa(graph, os.path.join(out_folder, after_gfa_file), one_strand=False)
+
+    print("Done")
